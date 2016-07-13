@@ -500,3 +500,68 @@ func TestParserTaskSelectorEvaluation(t *testing.T) {
 		})
 	})
 }
+
+func TestMatrixIntermediateParsing(t *testing.T) {
+	Convey("Testing different project files with matrix definitions", t, func() {
+		Convey("a set of axes should parse", func() {
+			axes := `
+axes:
+- id: os
+  display_name: Operating System
+  values:
+  - id: ubuntu
+    display_name: Ubuntu
+    tags: "linux"
+    variables:
+      user: root
+    run_on: ubuntu_small
+  - id: rhel
+    display_name: Red Hat
+    tags: ["linux", "enterprise"]
+    run_on:
+    - rhel55
+    - rhel62
+`
+			p, errs := createIntermediateProject([]byte(axes))
+			So(errs, ShouldBeNil)
+			axis := p.Axes[0]
+			So(axis.Id, ShouldEqual, "os")
+			So(axis.DisplayName, ShouldEqual, "Operating System")
+			So(len(axis.Values), ShouldEqual, 2)
+			So(axis.Values[0], ShouldResemble, axisValue{
+				Id:          "ubuntu",
+				DisplayName: "Ubuntu",
+				Tags:        []string{"linux"},
+				Variables:   map[string]string{"user": "root"},
+				RunOn:       []string{"ubuntu_small"},
+			})
+			So(axis.Values[1], ShouldResemble, axisValue{
+				Id:          "rhel",
+				DisplayName: "Red Hat",
+				Tags:        []string{"linux", "enterprise"},
+				RunOn:       []string{"rhel55", "rhel62"},
+			})
+		})
+		Convey("a barebones matrix definition should parse", func() {
+			simple := `
+matrixes:
+- matrix_name: "test"
+  matrix_spec: {"os": ".linux", "bits":["32", "64"]}
+  exclude_spec: [{"os":"ubuntu", "bits":"32"}]
+`
+			p, errs := createIntermediateProject([]byte(simple))
+			So(errs, ShouldBeNil)
+			m := p.Matrixes[0]
+			So(m, ShouldResemble, matrix{
+				Id: "test",
+				Spec: matrixDefinition{
+					"os":   []string{".linux"},
+					"bits": []string{"32", "64"},
+				},
+				Exclude: []matrixDefinition{
+					{"os": []string{"ubuntu"}, "bits": []string{"32"}},
+				},
+			})
+		})
+	})
+}

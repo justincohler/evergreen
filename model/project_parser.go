@@ -56,6 +56,10 @@ type parserProject struct {
 	Functions       map[string]*YAMLCommandSet `yaml:"functions"`
 	Tasks           []parserTask               `yaml:"tasks"`
 	ExecTimeoutSecs int                        `yaml:"exec_timeout_secs"`
+
+	// Matrix code
+	Axes     []matrixAxis `yaml:"axes"`
+	Matrixes []matrix     `yaml:"matrixes"`
 }
 
 // parserTask represents an intermediary state of task definitions.
@@ -179,7 +183,7 @@ type parserBV struct {
 	Name        string            `yaml:"name"`
 	DisplayName string            `yaml:"display_name"`
 	Expansions  map[string]string `yaml:"expansions"`
-	Tags        []string          `yaml:"tags"`
+	Tags        parserStringSlice `yaml:"tags"`
 	Modules     parserStringSlice `yaml:"modules"`
 	Disabled    bool              `yaml:"disabled"`
 	Push        bool              `yaml:"push"`
@@ -550,4 +554,45 @@ func evaluateRequires(tse *taskSelectorEvaluator, vse *variantSelectorEvaluator,
 		}
 	}
 	return newReqs, evalErrs
+}
+
+// MATRIX CODE //TODO move me
+
+type matrixAxis struct {
+	Id          string      `yaml:"id"`
+	DisplayName string      `yaml:"display_name"`
+	Values      []axisValue `yaml:"values"`
+}
+
+type axisValue struct {
+	Id          string            `yaml:"id"`
+	DisplayName string            `yaml:"display_name"`
+	Variables   map[string]string `yaml:"variables"`
+	RunOn       parserStringSlice `yaml:"run_on"`
+	Tags        parserStringSlice `yaml:"tags"`
+}
+
+// matrixValue represents a "cell" of a matrix
+type matrixValue map[string]string
+
+type matrixDefinition map[string]parserStringSlice
+
+type matrixDefinitions []matrixDefinition //TODO
+
+/*matrix := {
+	matrix_name := string ID for referring to the matrix as a whole
+	matrix_spec := matrix_definition
+	exclude_spec := matrix_definition (optional)
+	display_name := string with ${} expansions for building task names
+	tasks := [list of task_selector]
+	rules := [list of rules]
+}*/
+
+//TODO we'll have to merge this in with parserBV somehow...
+type matrix struct {
+	Id          string            `yaml:"matrix_name"`
+	Spec        matrixDefinition  `yaml:"matrix_spec"`
+	Exclude     matrixDefinitions `yaml:"exclude_spec"`
+	DisplayName string            `yaml:"display_name"`
+	//TODO tasks, rules
 }
