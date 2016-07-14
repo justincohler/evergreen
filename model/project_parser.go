@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/evergreen-ci/evergreen/util"
 	"gopkg.in/yaml.v2"
 )
 
@@ -577,16 +578,70 @@ type matrixValue map[string]string
 
 type matrixDefinition map[string]parserStringSlice
 
-type matrixDefinitions []matrixDefinition //TODO
+// allCells returns every value (cell) within the matrix definition.
+// IMPORTANT: this logic assume that all selectors have been evaluated
+// and no duplicates exist.
+func (mdef matrixDefinition) allCells() []matrixValue {
+	// this should never happen, we handle empty defs but just for sanity
+	if len(mdef) == 0 {
+		return nil
+	}
+	// You can think of the logic below as traversing an n-dimensional matrix,
+	// emulating an n-dimentsional for loop using a set of counters, like an old-school
+	// golf counter.  We're doing this iteratively to avoid the overhead and sloppy code
+	// required to constantly copy and merge maps that using recursion would require.
+	type axisCache struct {
+		Id    string
+		Vals  []string
+		Count int
+	}
+	axes := []axisCache{}
+	for axis, values := range mdef {
+		if len(values) == 0 {
+			panic(fmt.Sprintf("axis '%v' has empty values list", axis))
+		}
+		axes = append(axes, axisCache{Id: axis, Vals: values})
+	}
+	carryOne := false
+	cells := []matrixValue{}
+	for {
+		c := matrixValue{}
+		for i := range axes {
+			if carryOne {
+				carryOne = false
+				axes[i].Count = (axes[i].Count + 1) % len(axes[i].Vals)
+				if axes[i].Count == 0 { // we overflowed--time to carry the one
+					carryOne = true
+				}
+			}
+			// set the current axis/value pair for the new cell
+			c[axes[i].Id] = axes[i].Vals[axes[i].Count]
+		}
+		// if carryOne is still true, that means we've hit all iterations
+		if carryOne {
+			break
+		}
+		cells = append(cells, c)
+		// add one to the leftmost bucket on the next loop
+		carryOne = true
+	}
+	return cells
+}
 
-/*matrix := {
-	matrix_name := string ID for referring to the matrix as a whole
-	matrix_spec := matrix_definition
-	exclude_spec := matrix_definition (optional)
-	display_name := string with ${} expansions for building task names
-	tasks := [list of task_selector]
-	rules := [list of rules]
-}*/
+func (md matrixDefinition) contains(mv matrixValue) bool {
+	for k, v := range mv {
+		axis, ok := md[k]
+		if !ok {
+			return false
+		}
+		if !util.SliceContains(axis, v) {
+			return false
+		}
+	}
+	return true
+}
+
+type matrixDefinitions []matrixDefinition //TODO
 
 //TODO we'll have to merge this in with parserBV somehow...
 type matrix struct {
@@ -595,4 +650,20 @@ type matrix struct {
 	Exclude     matrixDefinitions `yaml:"exclude_spec"`
 	DisplayName string            `yaml:"display_name"`
 	//TODO tasks, rules
+}
+
+// helper type for caching the id, tags, and
+type matrixDecl struct {
+	Id    string
+	Value matrixValue
+	Tags  []string
+}
+
+// TODO axis tag matcher!!
+func buildMatrixDeclarations(axes []axisValue, matrices []matrix) ([]matrixDecl, []error) {
+	// for each matrix, build out its declarations
+	//for _, m := range matrices {
+	// for each axis value, iterate through possible inputs
+	//	}
+	return nil, nil
 }

@@ -5,8 +5,21 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/evergreen-ci/evergreen/util"
 	. "github.com/smartystreets/goconvey/convey"
 )
+
+// ShouldContainResembling tests whether a slice contains an element that DeepEquals
+// the expected input. TODO make this a subpkg
+func ShouldContainResembling(actual interface{}, expected ...interface{}) string {
+	if len(expected) != 1 {
+		return "ShouldContainResembling takes 1 argument"
+	}
+	if !util.SliceContains(actual, expected[0]) {
+		return fmt.Sprintf("%#v does not contain %#v", actual, expected[0])
+	}
+	return ""
+}
 
 func TestCreateIntermediateProjectDependencies(t *testing.T) {
 	Convey("Testing different project files", t, func() {
@@ -548,11 +561,19 @@ matrixes:
 - matrix_name: "test"
   matrix_spec: {"os": ".linux", "bits":["32", "64"]}
   exclude_spec: [{"os":"ubuntu", "bits":"32"}]
+- matrix_name: "test2"
+  matrix_spec:
+    os: "windows95"
+    color:
+    - red
+    - blue
+    - green
 `
 			p, errs := createIntermediateProject([]byte(simple))
 			So(errs, ShouldBeNil)
-			m := p.Matrixes[0]
-			So(m, ShouldResemble, matrix{
+			So(len(p.Matrixes), ShouldEqual, 2)
+			m1 := p.Matrixes[0]
+			So(m1, ShouldResemble, matrix{
 				Id: "test",
 				Spec: matrixDefinition{
 					"os":   []string{".linux"},
@@ -561,6 +582,152 @@ matrixes:
 				Exclude: []matrixDefinition{
 					{"os": []string{"ubuntu"}, "bits": []string{"32"}},
 				},
+			})
+			m2 := p.Matrixes[1]
+			So(m2, ShouldResemble, matrix{
+				Id: "test2",
+				Spec: matrixDefinition{
+					"os":    []string{"windows95"},
+					"color": []string{"red", "blue", "green"},
+				},
+			})
+		})
+	})
+}
+
+func TestMatrixDefinitionAllCells(t *testing.T) {
+	Convey("With a set of test definitions", t, func() {
+		Convey("and empty definition should return an empty list", func() {
+			a := matrixDefinition{}
+			cells := a.allCells()
+			So(len(cells), ShouldEqual, 0)
+		})
+		Convey("a one-cell matrix should return a one-item list", func() {
+			a := matrixDefinition{
+				"a": []string{"0"},
+			}
+			cells := a.allCells()
+			So(len(cells), ShouldEqual, 1)
+			So(cells, ShouldContainResembling, matrixValue{"a": "0"})
+			b := matrixDefinition{
+				"a": []string{"0"},
+				"b": []string{"1"},
+				"c": []string{"2"},
+			}
+			cells = b.allCells()
+			So(len(cells), ShouldEqual, 1)
+			So(cells, ShouldContainResembling, matrixValue{"a": "0", "b": "1", "c": "2"})
+		})
+		Convey("a one-axis matrix should return an equivalent list", func() {
+			a := matrixDefinition{
+				"a": []string{"0", "1", "2"},
+			}
+			cells := a.allCells()
+			So(len(cells), ShouldEqual, 3)
+			So(cells, ShouldContainResembling, matrixValue{"a": "0"})
+			So(cells, ShouldContainResembling, matrixValue{"a": "1"})
+			So(cells, ShouldContainResembling, matrixValue{"a": "2"})
+			b := matrixDefinition{
+				"a": []string{"0"},
+				"b": []string{"0", "1", "2"},
+			}
+			cells = b.allCells()
+			So(len(cells), ShouldEqual, 3)
+			So(cells, ShouldContainResembling, matrixValue{"b": "0", "a": "0"})
+			So(cells, ShouldContainResembling, matrixValue{"b": "1", "a": "0"})
+			So(cells, ShouldContainResembling, matrixValue{"b": "2", "a": "0"})
+			c := matrixDefinition{
+				"c": []string{"0", "1", "2"},
+				"d": []string{"0"},
+			}
+			cells = c.allCells()
+			So(len(cells), ShouldEqual, 3)
+			So(cells, ShouldContainResembling, matrixValue{"c": "0", "d": "0"})
+			So(cells, ShouldContainResembling, matrixValue{"c": "1", "d": "0"})
+			So(cells, ShouldContainResembling, matrixValue{"c": "2", "d": "0"})
+		})
+		Convey("a 2x2 matrix should expand properly", func() {
+			a := matrixDefinition{
+				"a": []string{"0", "1"},
+				"b": []string{"0", "1"},
+			}
+			cells := a.allCells()
+			So(len(cells), ShouldEqual, 4)
+			So(cells, ShouldContainResembling, matrixValue{"a": "0", "b": "0"})
+			So(cells, ShouldContainResembling, matrixValue{"a": "1", "b": "0"})
+			So(cells, ShouldContainResembling, matrixValue{"a": "0", "b": "1"})
+			So(cells, ShouldContainResembling, matrixValue{"a": "1", "b": "1"})
+		})
+		Convey("a disgustingly large matrix should expand properly", func() {
+			bigList := func(max int) []string {
+				out := []string{}
+				for i := 0; i < max; i++ {
+					out = append(out, fmt.Sprint(i))
+				}
+				return out
+			}
+
+			huge := matrixDefinition{
+				"a": bigList(15),
+				"b": bigList(290),
+				"c": bigList(20),
+			}
+			cells := huge.allCells()
+			So(len(cells), ShouldEqual, 15*290*20)
+			So(cells, ShouldContainResembling, matrixValue{"a": "0", "b": "0", "c": "0"})
+			So(cells, ShouldContainResembling, matrixValue{"a": "14", "b": "289", "c": "19"})
+			// some random guesses
+			So(cells, ShouldContainResembling, matrixValue{"a": "10", "b": "29", "c": "1"})
+			So(cells, ShouldContainResembling, matrixValue{"a": "1", "b": "2", "c": "17"})
+			So(cells, ShouldContainResembling, matrixValue{"a": "8", "b": "100", "c": "5"})
+		})
+	})
+}
+
+func TestMatrixDefinitionContains(t *testing.T) {
+	Convey("With a set of test definitions", t, func() {
+		Convey("and empty definition should match nothing", func() {
+			a := matrixDefinition{}
+			So(a.contains(matrixValue{"a": "0"}), ShouldBeFalse)
+		})
+		Convey("all definitions contain the empty value", func() {
+			a := matrixDefinition{}
+			So(a.contains(matrixValue{}), ShouldBeTrue)
+			b := matrixDefinition{
+				"a": []string{"0", "1"},
+				"b": []string{"0", "1"},
+			}
+			So(b.contains(matrixValue{}), ShouldBeTrue)
+		})
+		Convey("a one-axis matrix should match all of its elements", func() {
+			a := matrixDefinition{
+				"a": []string{"0", "1", "2"},
+			}
+			So(a.contains(matrixValue{"a": "0"}), ShouldBeTrue)
+			So(a.contains(matrixValue{"a": "1"}), ShouldBeTrue)
+			So(a.contains(matrixValue{"a": "2"}), ShouldBeTrue)
+			So(a.contains(matrixValue{"a": "3"}), ShouldBeFalse)
+		})
+		Convey("a 2x2 matrix should match all of its elements", func() {
+			a := matrixDefinition{
+				"a": []string{"0", "1"},
+				"b": []string{"0", "1"},
+			}
+			cells := a.allCells()
+			So(len(cells), ShouldEqual, 4)
+			So(a.contains(matrixValue{"a": "0", "b": "0"}), ShouldBeTrue)
+			So(a.contains(matrixValue{"a": "1", "b": "0"}), ShouldBeTrue)
+			So(a.contains(matrixValue{"a": "0", "b": "1"}), ShouldBeTrue)
+			So(a.contains(matrixValue{"a": "1", "b": "1"}), ShouldBeTrue)
+			So(a.contains(matrixValue{"a": "1", "b": "2"}), ShouldBeFalse)
+			Convey("and sub-match all of its individual axis values", func() {
+				So(a.contains(matrixValue{"a": "0"}), ShouldBeTrue)
+				So(a.contains(matrixValue{"a": "1"}), ShouldBeTrue)
+				So(a.contains(matrixValue{"b": "0"}), ShouldBeTrue)
+				So(a.contains(matrixValue{"b": "1"}), ShouldBeTrue)
+				So(a.contains(matrixValue{"b": "7"}), ShouldBeFalse)
+				So(a.contains(matrixValue{"c": "1"}), ShouldBeFalse)
+				So(a.contains(matrixValue{"a": "1", "b": "1", "c": "1"}), ShouldBeFalse)
 			})
 		})
 	})

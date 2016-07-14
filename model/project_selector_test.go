@@ -90,7 +90,7 @@ func (ts testSelectee) tags() []string { return ts.Tags }
 func TestTaskSelectorEvaluation(t *testing.T) {
 	var tse *tagSelectorEvaluator
 
-	Convey("With a colorful set of Projecttags", t, func() {
+	Convey("With a colorful set of tags", t, func() {
 		defs := []tagSelectee{
 			testSelectee{Name: "red", Tags: []string{"primary", "warm"}},
 			testSelectee{Name: "orange", Tags: []string{"secondary", "warm"}},
