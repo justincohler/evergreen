@@ -91,7 +91,7 @@ func TestTaskSelectorEvaluation(t *testing.T) {
 	var tse *tagSelectorEvaluator
 
 	Convey("With a colorful set of tags", t, func() {
-		defs := []tagSelectee{
+		defs := []tagged{
 			testSelectee{Name: "red", Tags: []string{"primary", "warm"}},
 			testSelectee{Name: "orange", Tags: []string{"secondary", "warm"}},
 			testSelectee{Name: "yellow", Tags: []string{"primary", "warm"}},

@@ -119,24 +119,25 @@ func stringToCriterion(s string) selectCriterion {
 	return sc
 }
 
-// tagSelectee allows the tagSelectorEvaluator to work for multiple types
-type tagSelectee interface {
+// the tagged interface allows the tagSelectorEvaluator to work for multiple types
+type tagged interface {
 	name() string
 	tags() []string
 }
 
+// tagSelectorEvaluator evaluates selectors for arbitrary tagged items
 type tagSelectorEvaluator struct {
-	items  []tagSelectee
-	byName map[string]tagSelectee
-	byTag  map[string][]tagSelectee
+	items  []tagged
+	byName map[string]tagged
+	byTag  map[string][]tagged
 }
 
 // newTagSelectorEvaluator returns a new taskSelectorEvaluator.
-func newTagSelectorEvaluator(selectees []tagSelectee) *tagSelectorEvaluator {
+func newTagSelectorEvaluator(selectees []tagged) *tagSelectorEvaluator {
 	// cache everything
-	byName := map[string]tagSelectee{}
-	byTag := map[string][]tagSelectee{}
-	items := []tagSelectee{}
+	byName := map[string]tagged{}
+	byTag := map[string][]tagged{}
+	items := []tagged{}
 	for _, s := range selectees {
 		items = append(items, s)
 		byName[s.name()] = s
@@ -256,7 +257,7 @@ type taskSelectorEvaluator struct {
 // NewParserTaskSelectorEvaluator returns a new taskSelectorEvaluator.
 func NewParserTaskSelectorEvaluator(tasks []parserTask) *taskSelectorEvaluator {
 	// convert tasks into interface slice and use the tagSelectorEvaluator
-	var selectees []tagSelectee
+	var selectees []tagged
 	for i := range tasks {
 		selectees = append(selectees, &tasks[i])
 	}
@@ -282,10 +283,10 @@ type variantSelectorEvaluator struct {
 	//TODO cache for axes
 }
 
-// NewParservariantSelectorEvaluator returns a new taskSelectorEvaluator.
+// NewVariantSelectorEvaluator returns a new taskSelectorEvaluator.
 func NewVariantSelectorEvaluator(variants []parserBV) *variantSelectorEvaluator {
 	// convert variants into interface slice and use the tagSelectorEvaluator
-	var selectees []tagSelectee
+	var selectees []tagged
 	for i := range variants {
 		selectees = append(selectees, &variants[i])
 	}

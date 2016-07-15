@@ -2,6 +2,7 @@ package model
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"reflect"
 
@@ -565,6 +566,15 @@ type matrixAxis struct {
 	Values      []axisValue `yaml:"values"`
 }
 
+func (ma matrixAxis) find(id string) (axisValue, error) {
+	for _, v := range ma.Values {
+		if v.Id == id {
+			return v, nil
+		}
+	}
+	return axisValue{}, fmt.Errorf("axis '%v' does not contain value '%v'", ma.Id, id)
+}
+
 type axisValue struct {
 	Id          string            `yaml:"id"`
 	DisplayName string            `yaml:"display_name"`
@@ -575,6 +585,15 @@ type axisValue struct {
 
 // matrixValue represents a "cell" of a matrix
 type matrixValue map[string]string
+
+// String returns the matrixValue in simple JSON format
+func (mv matrixValue) String() string {
+	asJSON, err := json.Marshal(&mv)
+	if err != nil {
+		return fmt.Sprintf("%#v", mv)
+	}
+	return string(asJSON)
+}
 
 type matrixDefinition map[string]parserStringSlice
 
@@ -628,6 +647,7 @@ func (mdef matrixDefinition) allCells() []matrixValue {
 	return cells
 }
 
+// TODO outline behavior of this
 func (md matrixDefinition) contains(mv matrixValue) bool {
 	for k, v := range mv {
 		axis, ok := md[k]
@@ -642,6 +662,16 @@ func (md matrixDefinition) contains(mv matrixValue) bool {
 }
 
 type matrixDefinitions []matrixDefinition //TODO
+
+// Contain returns true if any of the definitions contain the given value.
+func (mds matrixDefinitions) Contain(v matrixValue) bool {
+	for _, m := range mds {
+		if m.contains(v) {
+			return true
+		}
+	}
+	return false
+}
 
 //TODO we'll have to merge this in with parserBV somehow...
 type matrix struct {
@@ -659,11 +689,75 @@ type matrixDecl struct {
 	Tags  []string
 }
 
+// helper methods for variant tag evaluations
+func (mdecl *matrixDecl) name() string   { return mdecl.Id }
+func (mdecl *matrixDecl) tags() []string { return mdecl.Tags }
+
 // TODO axis tag matcher!!
-func buildMatrixDeclarations(axes []axisValue, matrices []matrix) ([]matrixDecl, []error) {
+func buildMatrixDeclarations(axes []matrixAxis, matrices []matrix) ([]matrixDecl, []error) {
+	var errs []error
 	// for each matrix, build out its declarations
-	//for _, m := range matrices {
-	// for each axis value, iterate through possible inputs
-	//	}
-	return nil, nil
+	matrixVariantDecls := []matrixDecl{}
+	for _, m := range matrices {
+		// for each axis value, iterate through possible inputs
+		unpruned := m.Spec.allCells()
+		pruned := []matrixDecl{}
+		for _, cell := range unpruned {
+			// create the variant if it isn't excluded
+			if !m.Exclude.Contain(cell) {
+				decl, err := buildMatrixDeclaration(axes, cell, m.Id)
+				if err != nil {
+					errs = append(errs,
+						fmt.Errorf("%v: error building matrix cell %v: %v", m.Id, cell, err))
+					continue
+				}
+				pruned = append(pruned, decl)
+			}
+		}
+		// safety check to make sure the exclude field is actually working
+		if len(m.Exclude) > 0 && len(unpruned) == len(pruned) {
+			errs = append(errs, fmt.Errorf("%v: exlude field did not exclude anything"))
+		}
+		matrixVariantDecls = append(matrixVariantDecls, pruned...)
+	}
+	return matrixVariantDecls, errs
+}
+
+func buildMatrixDeclaration(axes []matrixAxis, mv matrixValue, matrixId string) (matrixDecl, error) {
+	decl := matrixDecl{Value: mv}
+	tagMap := map[string]struct{}{}
+	idBuf := bytes.Buffer{}
+	idBuf.WriteString(matrixId)
+	idBuf.WriteString("__")
+	// we track how many axes we cover, so we know the value is only using real axes
+	usedAxes := 0
+	// we need to iterate over axis to have a consistent ordering for our names
+	for _, a := range axes {
+		// skip any axes that aren't used in the variant definitions
+		if _, ok := mv[a.Id]; !ok {
+			continue
+		}
+		usedAxes++
+		axisVal, err := a.find(mv[a.Id])
+		if err != nil {
+			return matrixDecl{}, err
+		}
+		for _, tag := range axisVal.Tags {
+			tagMap[tag] = struct{}{}
+		}
+		idBuf.WriteString(a.Id)
+		idBuf.WriteRune('~')
+		idBuf.WriteString(axisVal.Id)
+		if usedAxes < len(mv) {
+			idBuf.WriteRune('_')
+		}
+	}
+	if usedAxes != len(mv) {
+		return matrixDecl{}, fmt.Errorf("cell undefined axes", mv)
+	}
+	decl.Id = idBuf.String()
+	for t, _ := range tagMap {
+		decl.Tags = append(decl.Tags, t)
+	}
+	return decl, nil
 }
