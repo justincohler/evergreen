@@ -583,6 +583,10 @@ type axisValue struct {
 	Tags        parserStringSlice `yaml:"tags"`
 }
 
+// helper methods for tag selectors
+func (av *axisValue) name() string   { return av.Id }
+func (av *axisValue) tags() []string { return av.Tags }
+
 // matrixValue represents a "cell" of a matrix
 type matrixValue map[string]string
 
@@ -693,6 +697,29 @@ type matrixDecl struct {
 func (mdecl *matrixDecl) name() string   { return mdecl.Id }
 func (mdecl *matrixDecl) tags() []string { return mdecl.Tags }
 
+// evaluateAxisTags returns an expanded list of axis value ids with tag selectors evaluated.
+func evaluateAxisTags(ase *axisSelectorEvaluator, axis string, selectors []string) ([]string, []error) {
+	var errs []error
+	all := map[string]struct{}{}
+	for _, s := range selectors {
+		ids, err := ase.evalSelector(axis, ParseSelector(s))
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		for _, id := range ids {
+			all[id] = struct{}{}
+		}
+	}
+	out := []string{}
+	for id, _ := range all {
+		out = append(out, id)
+	}
+	return out, errs
+}
+
+//TODO XXX NEXT: expand definitions, and write tests that make use of expanded definitions when building decls
+
 // TODO axis tag matcher!!
 func buildMatrixDeclarations(axes []matrixAxis, matrices []matrix) ([]matrixDecl, []error) {
 	var errs []error
@@ -716,7 +743,7 @@ func buildMatrixDeclarations(axes []matrixAxis, matrices []matrix) ([]matrixDecl
 		}
 		// safety check to make sure the exclude field is actually working
 		if len(m.Exclude) > 0 && len(unpruned) == len(pruned) {
-			errs = append(errs, fmt.Errorf("%v: exlude field did not exclude anything"))
+			errs = append(errs, fmt.Errorf("%v: exclude field did not exclude anything", m.Id))
 		}
 		matrixVariantDecls = append(matrixVariantDecls, pruned...)
 	}
@@ -753,7 +780,8 @@ func buildMatrixDeclaration(axes []matrixAxis, mv matrixValue, matrixId string) 
 		}
 	}
 	if usedAxes != len(mv) {
-		return matrixDecl{}, fmt.Errorf("cell undefined axes", mv)
+		// we could make this error more helpful, but we'll make that call later
+		return matrixDecl{}, fmt.Errorf("cell %v uses undefined axes", mv)
 	}
 	decl.Id = idBuf.String()
 	for t, _ := range tagMap {

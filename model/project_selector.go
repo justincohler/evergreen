@@ -275,6 +275,41 @@ func (t *taskSelectorEvaluator) evalSelector(s Selector) ([]string, error) {
 	return results, nil
 }
 
+// Axis selector logic
+
+// axisSelectorEvaluator expands tags used for selected matrix axis values
+type axisSelectorEvaluator struct {
+	axisEvals map[string]*tagSelectorEvaluator
+}
+
+func NewAxisSelectorEvaluator(axes []matrixAxis) *axisSelectorEvaluator {
+	evals := map[string]*tagSelectorEvaluator{}
+	// convert axis values into interface slices and use the tagSelectorEvaluator
+	for i := range axes {
+		var selectees []tagged
+		for j := range axes[i].Values {
+			selectees = append(selectees, &(axes[i].Values[j]))
+		}
+		evals[axes[i].Id] = newTagSelectorEvaluator(selectees)
+	}
+	return &axisSelectorEvaluator{
+		axisEvals: evals,
+	}
+}
+
+// evalSelector returns all variants selected by the selector.
+func (ase *axisSelectorEvaluator) evalSelector(axis string, s Selector) ([]string, error) {
+	tagEval, ok := ase.axisEvals[axis]
+	if !ok {
+		return nil, fmt.Errorf("axis '%v' does not exist", axis)
+	}
+	results, err := tagEval.evalSelector(s)
+	if err != nil {
+		return nil, fmt.Errorf("error evaluating axis '%v' tag selector: %v", axis, err)
+	}
+	return results, nil
+}
+
 // Variant selector logic
 
 // variantSelectorEvaluator expands tags used in build variant definitions.

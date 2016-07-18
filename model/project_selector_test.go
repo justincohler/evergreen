@@ -176,3 +176,66 @@ func TestTaskSelectorEvaluation(t *testing.T) {
 		})
 	})
 }
+
+func axisSelectorShouldEval(ase *axisSelectorEvaluator, axis, s string, expected []string) {
+	Convey(fmt.Sprintf(`selector %v:"%v" should evaluate to %v`, axis, s, expected), func() {
+		names, err := ase.evalSelector(axis, ParseSelector(s))
+		if expected != nil {
+			So(err, ShouldBeNil)
+		} else {
+			So(err, ShouldNotBeNil)
+		}
+		So(len(names), ShouldEqual, len(expected))
+		for _, e := range expected {
+			So(names, ShouldContain, e)
+		}
+	})
+}
+
+func TestAxisSelectorEvaluation(t *testing.T) {
+	Convey("With a set of tagged axes and an axisSelectorEvaluator", t, func() {
+		axes := []matrixAxis{
+			{
+				Id: "material",
+				Values: []axisValue{
+					{Id: "wood", Tags: []string{"organic", "soft"}},
+					{Id: "carbon", Tags: []string{"organic"}},
+					{Id: "iron", Tags: []string{"metal", "strong"}},
+				},
+			},
+			{
+				Id: "temp",
+				Values: []axisValue{
+					{Id: "100", Tags: []string{"hot", "boiling"}},
+					{Id: "40", Tags: []string{"hot"}},
+					{Id: "10", Tags: []string{"cold"}},
+					{Id: "0", Tags: []string{"cold", "freezing"}},
+				},
+			},
+		}
+		ase := NewAxisSelectorEvaluator(axes)
+		So(ase, ShouldNotBeNil)
+		Convey("valid selectors should return proper results", func() {
+			axisSelectorShouldEval(ase, "material", "*", []string{"wood", "carbon", "iron"})
+			axisSelectorShouldEval(ase, "material", ".organic", []string{"wood", "carbon"})
+			axisSelectorShouldEval(ase, "material", ".strong", []string{"iron"})
+			axisSelectorShouldEval(ase, "material", "iron", []string{"iron"})
+			axisSelectorShouldEval(ase, "material", ".organic !.soft", []string{"carbon"})
+			axisSelectorShouldEval(ase, "temp", "*", []string{"0", "10", "40", "100"})
+			axisSelectorShouldEval(ase, "temp", "0", []string{"0"})
+			axisSelectorShouldEval(ase, "temp", ".hot", []string{"40", "100"})
+			axisSelectorShouldEval(ase, "temp", ".hot !.boiling", []string{"40"})
+		})
+		Convey("attempts to use an undefined axis should error", func() {
+			r, err := ase.evalSelector("fake", ParseSelector("*"))
+			So(r, ShouldBeNil)
+			So(err, ShouldNotBeNil)
+		})
+		Convey("attempts to use an undefined selector should error", func() {
+			r, err := ase.evalSelector("material", ParseSelector("nope"))
+			So(r, ShouldBeNil)
+			So(err, ShouldNotBeNil)
+		})
+	})
+
+}
