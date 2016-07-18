@@ -851,6 +851,8 @@ func TestMatrixDeclarations(t *testing.T) {
 				},
 			},
 		}
+		ase := NewAxisSelectorEvaluator(axes)
+		So(ase, ShouldNotBeNil)
 		Convey("and a valid matrix", func() {
 			m := matrix{
 				Id: "candy",
@@ -870,7 +872,7 @@ func TestMatrixDeclarations(t *testing.T) {
 				},
 			}
 			Convey("building a list of declarations should succeed", func() {
-				decls, errs := buildMatrixDeclarations(axes, []matrix{m})
+				decls, errs := buildMatrixDeclarations(axes, ase, []matrix{m})
 				So(errs, ShouldBeNil)
 				Convey("and return the correct list of combinations", func() {
 					So(len(decls), ShouldEqual, 19)
@@ -915,7 +917,7 @@ func TestMatrixDeclarations(t *testing.T) {
 				},
 			}
 			Convey("should fail to build", func() {
-				decls, errs := buildMatrixDeclarations(axes, []matrix{m})
+				decls, errs := buildMatrixDeclarations(axes, ase, []matrix{m})
 				So(len(decls), ShouldEqual, 0)
 				So(len(errs), ShouldEqual, 3)
 			})
@@ -928,7 +930,7 @@ func TestMatrixDeclarations(t *testing.T) {
 				},
 			}
 			Convey("should fail to build", func() {
-				decls, errs := buildMatrixDeclarations(axes, []matrix{m})
+				decls, errs := buildMatrixDeclarations(axes, ase, []matrix{m})
 				So(len(decls), ShouldEqual, 0)
 				So(len(errs), ShouldEqual, 2)
 			})

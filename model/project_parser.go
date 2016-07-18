@@ -651,10 +651,25 @@ func (mdef matrixDefinition) allCells() []matrixValue {
 	return cells
 }
 
+// evaluatedCopy returns a copy of the definition with its tag selectors evaluated.
+func (mdef matrixDefinition) evalutedCopy(ase *axisSelectorEvaluator) (matrixDefinition, []error) {
+	var errs []error
+	cpy := matrixDefinition{}
+	for axis, vals := range mdef {
+		evaluated, evalErrs := evaluateAxisTags(ase, axis, vals)
+		if len(evalErrs) > 0 {
+			errs = append(errs, evalErrs...)
+			continue
+		}
+		cpy[axis] = evaluated
+	}
+	return cpy, errs
+}
+
 // TODO outline behavior of this
-func (md matrixDefinition) contains(mv matrixValue) bool {
+func (mdef matrixDefinition) contains(mv matrixValue) bool {
 	for k, v := range mv {
-		axis, ok := md[k]
+		axis, ok := mdef[k]
 		if !ok {
 			return false
 		}
@@ -667,14 +682,25 @@ func (md matrixDefinition) contains(mv matrixValue) bool {
 
 type matrixDefinitions []matrixDefinition //TODO
 
-// Contain returns true if any of the definitions contain the given value.
-func (mds matrixDefinitions) Contain(v matrixValue) bool {
+// contain returns true if any of the definitions contain the given value.
+func (mds matrixDefinitions) contain(v matrixValue) bool {
 	for _, m := range mds {
 		if m.contains(v) {
 			return true
 		}
 	}
 	return false
+}
+
+func (mds matrixDefinitions) evaluatedCopies(ase *axisSelectorEvaluator) (matrixDefinitions, []error) {
+	var out matrixDefinitions
+	var errs []error
+	for _, md := range mds {
+		evaluated, evalErrs := md.evalutedCopy(ase)
+		errs = append(errs, evalErrs...)
+		out = append(out, evaluated)
+	}
+	return out, errs
 }
 
 //TODO we'll have to merge this in with parserBV somehow...
@@ -721,17 +747,28 @@ func evaluateAxisTags(ase *axisSelectorEvaluator, axis string, selectors []strin
 //TODO XXX NEXT: expand definitions, and write tests that make use of expanded definitions when building decls
 
 // TODO axis tag matcher!!
-func buildMatrixDeclarations(axes []matrixAxis, matrices []matrix) ([]matrixDecl, []error) {
+func buildMatrixDeclarations(axes []matrixAxis, ase *axisSelectorEvaluator, matrices []matrix) (
+	[]matrixDecl, []error) {
 	var errs []error
 	// for each matrix, build out its declarations
 	matrixVariantDecls := []matrixDecl{}
 	for _, m := range matrices {
 		// for each axis value, iterate through possible inputs
-		unpruned := m.Spec.allCells()
+		evaluatedSpec, evalErrs := m.Spec.evalutedCopy(ase)
+		if len(evalErrs) > 0 {
+			errs = append(errs, evalErrs...)
+			continue
+		}
+		evaluatedExcludes, evalErrs := m.Exclude.evaluatedCopies(ase)
+		if len(evalErrs) > 0 {
+			errs = append(errs, evalErrs...)
+			continue
+		}
+		unpruned := evaluatedSpec.allCells()
 		pruned := []matrixDecl{}
 		for _, cell := range unpruned {
 			// create the variant if it isn't excluded
-			if !m.Exclude.Contain(cell) {
+			if !evaluatedExcludes.contain(cell) {
 				decl, err := buildMatrixDeclaration(axes, cell, m.Id)
 				if err != nil {
 					errs = append(errs,
