@@ -740,7 +740,8 @@ func TestMatrixDefinitionContains(t *testing.T) {
 	})
 }
 
-func TestBuildMatrixDeclaration(t *testing.T) {
+func TestBuildMatrixVariantSimple(t *testing.T) {
+	testMatrix := &matrix{Id: "test"}
 	Convey("With a set of test axes", t, func() {
 		axes := []matrixAxis{
 			{
@@ -764,41 +765,40 @@ func TestBuildMatrixDeclaration(t *testing.T) {
 		}
 		Convey("and matrix value test:{a:0, b:0}", func() {
 			mv := matrixValue{"a": "0", "b": "0"}
-			Convey("the declaration should build without error", func() {
-				decl, err := buildMatrixDeclaration(axes, mv, "test")
+			Convey("the variant should build without error", func() {
+				v, err := buildMatrixVariant(axes, mv, testMatrix)
 				So(err, ShouldBeNil)
 				Convey("with id='test__a~0_b~0', tags=[zero]", func() {
-					So(decl, ShouldResemble, matrixDecl{
-						Id:    "test__a~0_b~0",
-						Tags:  []string{"zero"},
-						Value: mv,
-					})
+					So(v.Name, ShouldEqual, "test__a~0_b~0")
+					So(v.matrixVal, ShouldResemble, mv)
+					So(v.Tags, ShouldContain, "zero")
+					So(v.matrixId, ShouldEqual, "test")
 				})
 			})
 		})
 		Convey("and matrix value test:{a:1, b:3}", func() {
 			mv := matrixValue{"b": "3", "a": "1"}
-			Convey("the declaration should build without error", func() {
-				decl, err := buildMatrixDeclaration(axes, mv, "test")
+			Convey("the variant should build without error", func() {
+				v, err := buildMatrixVariant(axes, mv, testMatrix)
 				So(err, ShouldBeNil)
 				Convey("with id='test__a~1_b~3', tags=[odd, prime]", func() {
-					So(decl.Id, ShouldEqual, "test__a~1_b~3")
-					So(decl.Tags, ShouldContain, "odd")
-					So(decl.Tags, ShouldContain, "prime")
+					So(v.Name, ShouldEqual, "test__a~1_b~3")
+					So(v.Tags, ShouldContain, "odd")
+					So(v.Tags, ShouldContain, "prime")
 				})
 			})
 		})
 		Convey("and a matrix value that references non-existant axis values", func() {
 			mv := matrixValue{"b": "2", "a": "4"}
 			Convey("should return an error", func() {
-				_, err := buildMatrixDeclaration(axes, mv, "test")
+				_, err := buildMatrixVariant(axes, mv, testMatrix)
 				So(err, ShouldNotBeNil)
 			})
 		})
 		Convey("and a matrix value that references non-existant axis names", func() {
 			mv := matrixValue{"b": "2", "coolfun": "4"}
 			Convey("should return an error", func() {
-				_, err := buildMatrixDeclaration(axes, mv, "test")
+				_, err := buildMatrixVariant(axes, mv, testMatrix)
 				So(err, ShouldNotBeNil)
 			})
 		})
@@ -815,7 +815,17 @@ func findDecl(decls []matrixDecl, id string) matrixDecl {
 	panic("not found")
 }
 
-func TestMatrixDeclarations(t *testing.T) {
+// helper for pulling variants out of a list
+func findVariant(vs []*parserBV, id string) *parserBV {
+	for _, v := range vs {
+		if v.Name == id {
+			return v
+		}
+	}
+	panic("not found")
+}
+
+func TestMatrixVariantsSimple(t *testing.T) {
 	Convey("With a delicious set of test axes", t, func() {
 		// These tests are structured around a magical project that tests
 		// colorful candies. We will be testing M&Ms, Skittles, and Necco Wafers
@@ -871,22 +881,22 @@ func TestMatrixDeclarations(t *testing.T) {
 					{"brand": []string{"necco"}, "color": []string{"red", "blue"}},
 				},
 			}
-			Convey("building a list of declarations should succeed", func() {
-				decls, errs := buildMatrixDeclarations(axes, ase, []matrix{m})
+			Convey("building a list of variants should succeed", func() {
+				vs, errs := buildMatrixVariants(axes, ase, []matrix{m})
 				So(errs, ShouldBeNil)
 				Convey("and return the correct list of combinations", func() {
-					So(len(decls), ShouldEqual, 19)
+					So(len(vs), ShouldEqual, 19)
 					// check a couple random samples
-					d1 := findDecl(decls, "candy__color~yellow_brand~skittles")
+					d1 := findVariant(vs, "candy__color~yellow_brand~skittles")
 					So(d1.Tags, ShouldContain, "hot_color")
 					So(d1.Tags, ShouldContain, "chewy")
-					d2 := findDecl(decls, "candy__color~black_brand~necco")
+					d2 := findVariant(vs, "candy__color~black_brand~necco")
 					So(len(d2.Tags), ShouldEqual, 1)
 					So(d2.Tags, ShouldContain, "chalk")
 					// ensure all values are in there...
 					vals := []matrixValue{}
-					for _, d := range decls {
-						vals = append(vals, d.Value)
+					for _, v := range vs {
+						vals = append(vals, v.matrixVal)
 					}
 					So(vals, ShouldContainResembling, matrixValue{"brand": "m&ms", "color": "red"})
 					So(vals, ShouldContainResembling, matrixValue{"brand": "m&ms", "color": "orange"})
@@ -909,6 +919,48 @@ func TestMatrixDeclarations(t *testing.T) {
 				})
 			})
 		})
+		Convey("and a valid matrix using tag selectors", func() {
+			m := matrix{
+				Id: "candy",
+				Spec: matrixDefinition{
+					"color": []string{".hot_color", ".cool_color"}, // all but white and black
+					"brand": []string{"*"},
+				},
+				Exclude: []matrixDefinition{
+					{"brand": []string{".chewy"}, "color": []string{"brown", "blue"}},
+					{"brand": []string{".chocolate"}, "color": []string{"purple"}},
+					{"brand": []string{"!.chewy", "skittles"}, "color": []string{"pink"}},
+					{"brand": []string{"!skittles !m&ms"}, "color": []string{"red", "blue"}},
+				},
+			}
+			Convey("building a list of varations should succeed", func() {
+				vs, errs := buildMatrixVariants(axes, ase, []matrix{m})
+				So(errs, ShouldBeNil)
+				Convey("and return the correct list of combinations", func() {
+					// ensure all values are in there...
+					So(len(vs), ShouldEqual, 16)
+					vals := []matrixValue{}
+					for _, d := range vs {
+						vals = append(vals, d.matrixVal)
+					}
+					So(vals, ShouldContainResembling, matrixValue{"brand": "m&ms", "color": "red"})
+					So(vals, ShouldContainResembling, matrixValue{"brand": "m&ms", "color": "orange"})
+					So(vals, ShouldContainResembling, matrixValue{"brand": "m&ms", "color": "yellow"})
+					So(vals, ShouldContainResembling, matrixValue{"brand": "m&ms", "color": "green"})
+					So(vals, ShouldContainResembling, matrixValue{"brand": "m&ms", "color": "blue"})
+					So(vals, ShouldContainResembling, matrixValue{"brand": "m&ms", "color": "brown"})
+					So(vals, ShouldContainResembling, matrixValue{"brand": "skittles", "color": "red"})
+					So(vals, ShouldContainResembling, matrixValue{"brand": "skittles", "color": "orange"})
+					So(vals, ShouldContainResembling, matrixValue{"brand": "skittles", "color": "yellow"})
+					So(vals, ShouldContainResembling, matrixValue{"brand": "skittles", "color": "green"})
+					So(vals, ShouldContainResembling, matrixValue{"brand": "skittles", "color": "purple"})
+					So(vals, ShouldContainResembling, matrixValue{"brand": "necco", "color": "orange"})
+					So(vals, ShouldContainResembling, matrixValue{"brand": "necco", "color": "yellow"})
+					So(vals, ShouldContainResembling, matrixValue{"brand": "necco", "color": "green"})
+					So(vals, ShouldContainResembling, matrixValue{"brand": "necco", "color": "purple"})
+				})
+			})
+		})
 		Convey("and a matrix that uses wrong axes", func() {
 			m := matrix{
 				Id: "candy",
@@ -917,8 +969,8 @@ func TestMatrixDeclarations(t *testing.T) {
 				},
 			}
 			Convey("should fail to build", func() {
-				decls, errs := buildMatrixDeclarations(axes, ase, []matrix{m})
-				So(len(decls), ShouldEqual, 0)
+				vs, errs := buildMatrixVariants(axes, ase, []matrix{m})
+				So(len(vs), ShouldEqual, 0)
 				So(len(errs), ShouldEqual, 3)
 			})
 		})
@@ -930,8 +982,8 @@ func TestMatrixDeclarations(t *testing.T) {
 				},
 			}
 			Convey("should fail to build", func() {
-				decls, errs := buildMatrixDeclarations(axes, ase, []matrix{m})
-				So(len(decls), ShouldEqual, 0)
+				vs, errs := buildMatrixVariants(axes, ase, []matrix{m})
+				So(len(vs), ShouldEqual, 0)
 				So(len(errs), ShouldEqual, 2)
 			})
 		})

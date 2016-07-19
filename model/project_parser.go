@@ -193,6 +193,10 @@ type parserBV struct {
 	Stepback    *bool             `yaml:"stepback"`
 	RunOn       parserStringSlice `yaml:"run_on"`
 	Tasks       parserBVTasks     `yaml:"tasks"`
+
+	// internal matrix stuff
+	matrixId  string
+	matrixVal matrixValue
 }
 
 // helper methods for variant tag evaluations
@@ -709,14 +713,22 @@ type matrix struct {
 	Spec        matrixDefinition  `yaml:"matrix_spec"`
 	Exclude     matrixDefinitions `yaml:"exclude_spec"`
 	DisplayName string            `yaml:"display_name"`
-	//TODO tasks, rules
+	//TODO clean this
+	Tags      parserStringSlice `yaml:"tags"`
+	Modules   parserStringSlice `yaml:"modules"`
+	BatchTime *int              `yaml:"batchtime"`
+	Stepback  *bool             `yaml:"stepback"`
+	RunOn     parserStringSlice `yaml:"run_on"`
+	Tasks     parserBVTasks     `yaml:"tasks"`
 }
 
 // helper type for caching the id, tags, and
 type matrixDecl struct {
-	Id    string
-	Value matrixValue
-	Tags  []string
+	Id         string
+	Matrix     *matrix
+	Value      matrixValue
+	AxisValues []*axisValue
+	Tags       []string
 }
 
 // helper methods for variant tag evaluations
@@ -744,15 +756,12 @@ func evaluateAxisTags(ase *axisSelectorEvaluator, axis string, selectors []strin
 	return out, errs
 }
 
-//TODO XXX NEXT: expand definitions, and write tests that make use of expanded definitions when building decls
-
-// TODO axis tag matcher!!
-func buildMatrixDeclarations(axes []matrixAxis, ase *axisSelectorEvaluator, matrices []matrix) (
-	[]matrixDecl, []error) {
+func buildMatrixVariants(axes []matrixAxis, ase *axisSelectorEvaluator, matrices []matrix) (
+	[]*parserBV, []error) {
 	var errs []error
 	// for each matrix, build out its declarations
-	matrixVariantDecls := []matrixDecl{}
-	for _, m := range matrices {
+	matrixVariants := []*parserBV{}
+	for i, m := range matrices {
 		// for each axis value, iterate through possible inputs
 		evaluatedSpec, evalErrs := m.Spec.evalutedCopy(ase)
 		if len(evalErrs) > 0 {
@@ -765,37 +774,42 @@ func buildMatrixDeclarations(axes []matrixAxis, ase *axisSelectorEvaluator, matr
 			continue
 		}
 		unpruned := evaluatedSpec.allCells()
-		pruned := []matrixDecl{}
+		pruned := []*parserBV{}
 		for _, cell := range unpruned {
 			// create the variant if it isn't excluded
 			if !evaluatedExcludes.contain(cell) {
-				decl, err := buildMatrixDeclaration(axes, cell, m.Id)
+				v, err := buildMatrixVariant(axes, cell, &matrices[i])
 				if err != nil {
 					errs = append(errs,
 						fmt.Errorf("%v: error building matrix cell %v: %v", m.Id, cell, err))
 					continue
 				}
-				pruned = append(pruned, decl)
+				pruned = append(pruned, v)
 			}
 		}
 		// safety check to make sure the exclude field is actually working
 		if len(m.Exclude) > 0 && len(unpruned) == len(pruned) {
 			errs = append(errs, fmt.Errorf("%v: exclude field did not exclude anything", m.Id))
 		}
-		matrixVariantDecls = append(matrixVariantDecls, pruned...)
+		matrixVariants = append(matrixVariants, pruned...)
 	}
-	return matrixVariantDecls, errs
+	return matrixVariants, errs
 }
 
-func buildMatrixDeclaration(axes []matrixAxis, mv matrixValue, matrixId string) (matrixDecl, error) {
-	decl := matrixDecl{Value: mv}
+func buildMatrixVariant(axes []matrixAxis, mv matrixValue, m *matrix) (*parserBV, error) {
+	v := parserBV{matrixVal: mv, matrixId: m.Id}
 	tagMap := map[string]struct{}{}
+	// throw any matrix-level tags into the tag map
+	// TODO init expansions
+	for _, t := range m.Tags {
+		tagMap[t] = struct{}{}
+	}
 	idBuf := bytes.Buffer{}
-	idBuf.WriteString(matrixId)
+	idBuf.WriteString(m.Id)
 	idBuf.WriteString("__")
 	// we track how many axes we cover, so we know the value is only using real axes
 	usedAxes := 0
-	// we need to iterate over axis to have a consistent ordering for our names
+	// we must iterate over axis to have a consistent ordering for our names
 	for _, a := range axes {
 		// skip any axes that aren't used in the variant definitions
 		if _, ok := mv[a.Id]; !ok {
@@ -804,25 +818,42 @@ func buildMatrixDeclaration(axes []matrixAxis, mv matrixValue, matrixId string) 
 		usedAxes++
 		axisVal, err := a.find(mv[a.Id])
 		if err != nil {
-			return matrixDecl{}, err
+			return nil, err
 		}
+
+		// update tag map
 		for _, tag := range axisVal.Tags {
 			tagMap[tag] = struct{}{}
 		}
+		// update variables FIXME
+
+		// append to the variant's name
 		idBuf.WriteString(a.Id)
 		idBuf.WriteRune('~')
 		idBuf.WriteString(axisVal.Id)
 		if usedAxes < len(mv) {
 			idBuf.WriteRune('_')
 		}
+
+		// update other fields
+		if len(axisVal.RunOn) > 0 {
+			v.RunOn = axisVal.RunOn
+		}
+
+		// TODO mergeWithAxis helper, strict expansion parsing
+
 	}
 	if usedAxes != len(mv) {
-		// we could make this error more helpful, but we'll make that call later
-		return matrixDecl{}, fmt.Errorf("cell %v uses undefined axes", mv)
+		// we could make this error more helpful at the expense of extra complexity,
+		// but we can make that call later
+		return nil, fmt.Errorf("cell %v uses undefined axes", mv)
 	}
-	decl.Id = idBuf.String()
+	v.Name = idBuf.String()
 	for t, _ := range tagMap {
-		decl.Tags = append(decl.Tags, t)
+		v.Tags = append(v.Tags, t)
 	}
-	return decl, nil
+	v.Tasks = m.Tasks
+	// TODO display name
+	// tasks TODO rules
+	return &v, nil
 }

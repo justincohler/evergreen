@@ -67,6 +67,7 @@ func (self *Expansions) Exists(expansion string) bool {
 	return ok
 }
 
+// TODO strict mode
 // Apply the expansions to a single string.
 // Return the expanded string, or an error if the input string is malformed.
 func (self *Expansions) ExpandString(toExpand string) (string, error) {
