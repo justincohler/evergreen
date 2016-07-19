@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/evergreen-ci/evergreen/command"
 	"github.com/evergreen-ci/evergreen/util"
 	"gopkg.in/yaml.v2"
 )
@@ -182,17 +183,17 @@ func (ts *TaskSelector) UnmarshalYAML(unmarshal func(interface{}) error) error {
 
 // parserBV is a helper type storing intermediary variant definitions.
 type parserBV struct {
-	Name        string            `yaml:"name"`
-	DisplayName string            `yaml:"display_name"`
-	Expansions  map[string]string `yaml:"expansions"`
-	Tags        parserStringSlice `yaml:"tags"`
-	Modules     parserStringSlice `yaml:"modules"`
-	Disabled    bool              `yaml:"disabled"`
-	Push        bool              `yaml:"push"`
-	BatchTime   *int              `yaml:"batchtime"`
-	Stepback    *bool             `yaml:"stepback"`
-	RunOn       parserStringSlice `yaml:"run_on"`
-	Tasks       parserBVTasks     `yaml:"tasks"`
+	Name        string             `yaml:"name"`
+	DisplayName string             `yaml:"display_name"`
+	Expansions  command.Expansions `yaml:"expansions"`
+	Tags        parserStringSlice  `yaml:"tags"`
+	Modules     parserStringSlice  `yaml:"modules"`
+	Disabled    bool               `yaml:"disabled"`
+	Push        bool               `yaml:"push"`
+	BatchTime   *int               `yaml:"batchtime"`
+	Stepback    *bool              `yaml:"stepback"`
+	RunOn       parserStringSlice  `yaml:"run_on"`
+	Tasks       parserBVTasks      `yaml:"tasks"`
 
 	// internal matrix stuff
 	matrixId  string
@@ -202,6 +203,72 @@ type parserBV struct {
 // helper methods for variant tag evaluations
 func (pbv *parserBV) name() string   { return pbv.Name }
 func (pbv *parserBV) tags() []string { return pbv.Tags }
+
+func (pbv *parserBV) mergeAxisValue(av axisValue) error {
+	// expand the expansions (woah, dude) and update them
+	if len(av.Variables) > 0 {
+		expanded, err := expandExpansions(av.Variables, pbv.Expansions)
+		if err != nil {
+			return fmt.Errorf("expanding variables: %v", err)
+		}
+		pbv.Expansions.Update(expanded)
+	}
+	// merge tags, removing dupes
+	if len(av.Tags) > 0 {
+		expanded, err := expandStrings(av.Tags, pbv.Expansions)
+		if err != nil {
+			return fmt.Errorf("expanding tags: %v", err)
+		}
+		pbv.Tags = util.UniqueStrings(append(pbv.Tags, expanded...))
+	}
+	// overwrite run_on
+	var err error
+	if len(av.RunOn) > 0 {
+		pbv.RunOn, err = expandStrings(av.RunOn, pbv.Expansions)
+		if err != nil {
+			return fmt.Errorf("expanding run_on: %v", err)
+		}
+	}
+	// overwrite modules
+	if len(av.Modules) > 0 {
+		pbv.Modules, err = expandStrings(av.Modules, pbv.Expansions)
+		if err != nil {
+			return fmt.Errorf("expanding modules: %v", err)
+		}
+	}
+	// TODO other fields
+	return nil
+}
+
+// helper for expanding a slice of strings
+func expandStrings(strings []string, exp command.Expansions) ([]string, error) {
+	var expanded []string
+	for _, s := range strings {
+		newS, err := exp.ExpandString(s) //TODO strict
+		if err != nil {
+			return nil, err
+		}
+		expanded = append(expanded, newS)
+	}
+	return expanded, nil
+}
+
+// helper for expanding expansion maps
+func expandExpansions(in, exp command.Expansions) (command.Expansions, error) {
+	newExp := command.Expansions{}
+	for k, v := range in {
+		newK, err := exp.ExpandString(k)
+		if err != nil {
+			return nil, err
+		}
+		newV, err := exp.ExpandString(v)
+		if err != nil {
+			return nil, err
+		}
+		newExp[newK] = newV
+	}
+	return newExp, nil
+}
 
 // parserBVTask is a helper type storing intermediary variant task configurations.
 type parserBVTask struct {
@@ -359,8 +426,13 @@ func translateProject(pp *parserProject) (*Project, []error) {
 		ExecTimeoutSecs: pp.ExecTimeoutSecs,
 	}
 	tse := NewParserTaskSelectorEvaluator(pp.Tasks)
-	vse := NewVariantSelectorEvaluator(pp.BuildVariants)
+	ase := NewAxisSelectorEvaluator(pp.Axes)
 	var evalErrs, errs []error
+	matrixVariants, errs := buildMatrixVariants(pp.Axes, ase, pp.Matrixes)
+	evalErrs = append(evalErrs, errs...)
+	// TODO make immutable
+	pp.BuildVariants = append(pp.BuildVariants, matrixVariants...)
+	vse := NewVariantSelectorEvaluator(pp.BuildVariants)
 	proj.Tasks, errs = evaluateTasks(tse, vse, pp.Tasks)
 	evalErrs = append(evalErrs, errs...)
 	proj.BuildVariants, errs = evaluateBuildVariants(tse, vse, pp.BuildVariants)
@@ -580,11 +652,12 @@ func (ma matrixAxis) find(id string) (axisValue, error) {
 }
 
 type axisValue struct {
-	Id          string            `yaml:"id"`
-	DisplayName string            `yaml:"display_name"`
-	Variables   map[string]string `yaml:"variables"`
-	RunOn       parserStringSlice `yaml:"run_on"`
-	Tags        parserStringSlice `yaml:"tags"`
+	Id          string             `yaml:"id"`
+	DisplayName string             `yaml:"display_name"`
+	Variables   command.Expansions `yaml:"variables"`
+	RunOn       parserStringSlice  `yaml:"run_on"`
+	Tags        parserStringSlice  `yaml:"tags"`
+	Modules     parserStringSlice  `yaml:"modules"`
 }
 
 // helper methods for tag selectors
@@ -757,10 +830,10 @@ func evaluateAxisTags(ase *axisSelectorEvaluator, axis string, selectors []strin
 }
 
 func buildMatrixVariants(axes []matrixAxis, ase *axisSelectorEvaluator, matrices []matrix) (
-	[]*parserBV, []error) {
+	[]parserBV, []error) {
 	var errs []error
 	// for each matrix, build out its declarations
-	matrixVariants := []*parserBV{}
+	matrixVariants := []parserBV{}
 	for i, m := range matrices {
 		// for each axis value, iterate through possible inputs
 		evaluatedSpec, evalErrs := m.Spec.evalutedCopy(ase)
@@ -774,7 +847,7 @@ func buildMatrixVariants(axes []matrixAxis, ase *axisSelectorEvaluator, matrices
 			continue
 		}
 		unpruned := evaluatedSpec.allCells()
-		pruned := []*parserBV{}
+		pruned := []parserBV{}
 		for _, cell := range unpruned {
 			// create the variant if it isn't excluded
 			if !evaluatedExcludes.contain(cell) {
@@ -784,7 +857,7 @@ func buildMatrixVariants(axes []matrixAxis, ase *axisSelectorEvaluator, matrices
 						fmt.Errorf("%v: error building matrix cell %v: %v", m.Id, cell, err))
 					continue
 				}
-				pruned = append(pruned, v)
+				pruned = append(pruned, *v)
 			}
 		}
 		// safety check to make sure the exclude field is actually working
@@ -797,19 +870,19 @@ func buildMatrixVariants(axes []matrixAxis, ase *axisSelectorEvaluator, matrices
 }
 
 func buildMatrixVariant(axes []matrixAxis, mv matrixValue, m *matrix) (*parserBV, error) {
-	v := parserBV{matrixVal: mv, matrixId: m.Id}
-	tagMap := map[string]struct{}{}
-	// throw any matrix-level tags into the tag map
-	// TODO init expansions
-	for _, t := range m.Tags {
-		tagMap[t] = struct{}{}
+	v := parserBV{
+		matrixVal:  mv,
+		matrixId:   m.Id,
+		Tags:       m.Tags,
+		Expansions: *command.NewExpansions(mv),
 	}
+	displayNameExp := command.Expansions{}
 	idBuf := bytes.Buffer{}
 	idBuf.WriteString(m.Id)
 	idBuf.WriteString("__")
 	// we track how many axes we cover, so we know the value is only using real axes
 	usedAxes := 0
-	// we must iterate over axis to have a consistent ordering for our names
+	// we must iterate over axis to have a consistent ordering for our names FIXME comment
 	for _, a := range axes {
 		// skip any axes that aren't used in the variant definitions
 		if _, ok := mv[a.Id]; !ok {
@@ -820,12 +893,15 @@ func buildMatrixVariant(axes []matrixAxis, mv matrixValue, m *matrix) (*parserBV
 		if err != nil {
 			return nil, err
 		}
-
-		// update tag map
-		for _, tag := range axisVal.Tags {
-			tagMap[tag] = struct{}{}
+		if err := v.mergeAxisValue(axisVal); err != nil {
+			return nil, fmt.Errorf("processing axis value %v,%v: %v", a.Id, axisVal.Id, err)
 		}
-		// update variables FIXME
+		// for display names, fall back to the axis value's id so we have *something*
+		if axisVal.DisplayName != "" {
+			displayNameExp.Put(a.Id, axisVal.DisplayName)
+		} else {
+			displayNameExp.Put(a.Id, axisVal.Id)
+		}
 
 		// append to the variant's name
 		idBuf.WriteString(a.Id)
@@ -834,14 +910,6 @@ func buildMatrixVariant(axes []matrixAxis, mv matrixValue, m *matrix) (*parserBV
 		if usedAxes < len(mv) {
 			idBuf.WriteRune('_')
 		}
-
-		// update other fields
-		if len(axisVal.RunOn) > 0 {
-			v.RunOn = axisVal.RunOn
-		}
-
-		// TODO mergeWithAxis helper, strict expansion parsing
-
 	}
 	if usedAxes != len(mv) {
 		// we could make this error more helpful at the expense of extra complexity,
@@ -849,11 +917,12 @@ func buildMatrixVariant(axes []matrixAxis, mv matrixValue, m *matrix) (*parserBV
 		return nil, fmt.Errorf("cell %v uses undefined axes", mv)
 	}
 	v.Name = idBuf.String()
-	for t, _ := range tagMap {
-		v.Tags = append(v.Tags, t)
-	}
 	v.Tasks = m.Tasks
-	// TODO display name
+	disp, err := displayNameExp.ExpandString(m.DisplayName)
+	if err != nil {
+		return nil, fmt.Errorf("processing display name: %v", err)
+	}
+	v.DisplayName = disp
 	// tasks TODO rules
 	return &v, nil
 }

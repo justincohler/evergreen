@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/evergreen-ci/evergreen/command"
 	"github.com/evergreen-ci/evergreen/util"
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -816,7 +817,7 @@ func findDecl(decls []matrixDecl, id string) matrixDecl {
 }
 
 // helper for pulling variants out of a list
-func findVariant(vs []*parserBV, id string) *parserBV {
+func findVariant(vs []parserBV, id string) parserBV {
 	for _, v := range vs {
 		if v.Name == id {
 			return v
@@ -986,6 +987,71 @@ func TestMatrixVariantsSimple(t *testing.T) {
 				So(len(vs), ShouldEqual, 0)
 				So(len(errs), ShouldEqual, 2)
 			})
+		})
+	})
+}
+
+func TestMergeAxisValue(t *testing.T) {
+	Convey("With a parserBV", t, func() {
+		pbv := parserBV{
+			RunOn:   []string{"basic_distro"},
+			Modules: []string{"basic_module"},
+			Tags:    []string{"basic"},
+			Expansions: map[string]string{
+				"v1": "test",
+			},
+		}
+		Convey("a valid axis value should merge successfully", func() {
+			av := axisValue{
+				RunOn:   []string{"special_distro"},
+				Modules: []string{"module++"},
+				Tags:    []string{"enterprise"},
+				Variables: map[string]string{
+					"v2": "new",
+				},
+			}
+			So(pbv.mergeAxisValue(av), ShouldBeNil)
+			So(pbv.RunOn, ShouldResemble, av.RunOn)
+			So(pbv.Modules, ShouldResemble, av.Modules)
+			So(pbv.Tags, ShouldContain, "basic")
+			So(pbv.Tags, ShouldContain, "enterprise")
+			So(pbv.Expansions, ShouldResemble, command.Expansions{
+				"v1": "test",
+				"v2": "new",
+			})
+		})
+		Convey("a valid axis value full of expansions should merge successfully", func() {
+			av := axisValue{
+				RunOn:   []string{"${v1}", "${v2}"},
+				Modules: []string{"${v1}__"},
+				Tags:    []string{"fat${v2}"},
+				Variables: map[string]string{
+					"v2": "${v1}!",
+				},
+			}
+			So(pbv.mergeAxisValue(av), ShouldBeNil)
+			So(pbv.RunOn, ShouldResemble, parserStringSlice{"test", "test!"})
+			So(pbv.Modules, ShouldResemble, parserStringSlice{"test__"})
+			So(pbv.Tags, ShouldContain, "basic")
+			So(pbv.Tags, ShouldContain, "fattest!")
+			So(pbv.Expansions, ShouldResemble, command.Expansions{
+				"v1": "test",
+				"v2": "test!",
+			})
+		})
+		Convey("an axis value with a bad tag expansion should fail", func() {
+			av := axisValue{
+				Tags: []string{"fat${"},
+			}
+			So(pbv.mergeAxisValue(av), ShouldNotBeNil)
+		})
+		Convey("an axis value with a bad variables expansion should fail", func() {
+			av := axisValue{
+				Variables: map[string]string{
+					"v2": "${sdsad",
+				},
+			}
+			So(pbv.mergeAxisValue(av), ShouldNotBeNil)
 		})
 	})
 }
